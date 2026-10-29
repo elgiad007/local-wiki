@@ -30,6 +30,7 @@ export function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [storage, setStorage] = useState('');
   const [incoming, setIncoming] = useState<Snapshot>();
+  const [help, setHelp] = useState(false);
   const [wikiName, setWikiName] = useState('');
   const textarea = useRef<HTMLTextAreaElement>(null);
   const uploads = useRef<HTMLInputElement>(null);
@@ -69,8 +70,41 @@ export function App() {
   useEffect(() => { if (!notice) return; const id = setTimeout(() => setNotice(''), 6000); return () => clearTimeout(id); }, [notice]);
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (editorRef.current) void run(async () => { await queue.current; const p = await db.publish(editorRef.current!); await refresh(); leaveEditor(); go(p.path); setNotice('Page published.'); }); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); document.getElementById('search')?.focus(); }
+      if (event.defaultPrevented || event.isComposing || event.repeat || !data || busy || incoming || help) return;
+      const key = event.key.toLowerCase();
+      const command = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+      const access = event.altKey && !event.metaKey && (!event.ctrlKey || /Mac|iPhone|iPad/.test(navigator.platform));
+      const save = () => { if (editorRef.current?.title.trim() && normalizePath(editorRef.current.path)) void run(publishPage); };
+      if (command && key === 's') { event.preventDefault(); save(); return; }
+      if (command && key === 'k') { event.preventDefault(); document.getElementById('search')?.focus(); return; }
+      if (!access) return;
+      const actions: Record<string, () => void> = {
+        f: () => document.getElementById('search')?.focus(),
+        x: () => void run(() => switchSection('index')),
+        r: () => void run(() => switchSection('recent')),
+        t: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+      };
+      if (section === 'pages' && !query.trim()) {
+        if (editor) {
+          actions.s = save;
+          actions.p = () => setPreview(v => !v);
+          actions.v = () => void run(async () => { await queue.current; leaveEditor(); setNotice('Draft kept. Find it under Drafts.'); });
+          if (event.target === textarea.current) {
+            actions.b = () => format('**', '**', 'bold text');
+            actions.i = () => format('*', '*', 'italic text');
+            actions.m = () => format('`', '`', 'code');
+            actions.d = () => format('~~', '~~', 'text');
+            actions.l = () => format('[[', ']]', 'page-path|label');
+            for (let level = 1; level <= 5; level++) actions[String(level)] = () => heading(level);
+            actions['-'] = () => format('1. ', '', 'List item');
+            actions['.'] = () => format('- ', '', 'List item');
+          }
+        } else {
+          if (page || !data.pages.some(p => p.path === path && p.deleted)) actions.e = () => void run(async () => { await queue.current; edit(page, path); });
+          if (page) actions.o = () => setHistory(v => !v);
+        }
+      }
+      if (actions[key]) { event.preventDefault(); actions[key](); }
     };
     window.addEventListener('keydown', shortcuts); return () => window.removeEventListener('keydown', shortcuts);
   });
@@ -119,6 +153,25 @@ export function App() {
     updateDraft({ ...latest, source: latest.source.slice(0, start) + value + latest.source.slice(end) });
     requestAnimationFrame(() => { area?.focus(); area?.setSelectionRange(start + value.length, start + value.length); });
   }
+  function format(open: string, close: string, fallback: string) {
+    const draft = editorRef.current, area = textarea.current;
+    if (!draft || !area) return;
+    const start = area.selectionStart, end = area.selectionEnd;
+    const selected = draft.source.slice(start, end) || fallback;
+    updateDraft({ ...draft, source: draft.source.slice(0, start) + open + selected + close + draft.source.slice(end) });
+    requestAnimationFrame(() => { area.focus(); area.setSelectionRange(start + open.length, start + open.length + selected.length); });
+  }
+  function heading(level: number) {
+    const draft = editorRef.current, area = textarea.current;
+    if (!draft || !area) return;
+    const start = draft.source.lastIndexOf('\n', area.selectionStart - 1) + 1;
+    const nextLine = draft.source.indexOf('\n', area.selectionEnd);
+    const end = nextLine < 0 ? draft.source.length : nextLine;
+    const text = draft.source.slice(start, end).replace(/^#{1,6}\s+/, '') || 'Heading';
+    const prefix = '#'.repeat(level) + ' ';
+    updateDraft({ ...draft, source: draft.source.slice(0, start) + prefix + text + draft.source.slice(end) });
+    requestAnimationFrame(() => { area.focus(); area.setSelectionRange(start + prefix.length, start + prefix.length + text.length); });
+  }
 
   if (locked || fatal) return <div className="startup"><div className="brand-icon">W</div><h1>{locked ? 'Your wiki is open in another tab' : 'Local storage unavailable'}</h1><p>{locked ? 'Close the other wiki tab, then reopen here. One editing tab keeps your changes consistent.' : fatal}</p><button onClick={() => location.reload()}>Try again</button></div>;
   if (!data) return <div className="startup"><div className="brand-icon">W</div><p>Opening your wiki…</p></div>;
@@ -130,8 +183,8 @@ export function App() {
     const target = decodeURIComponent(anchor.getAttribute('href')!.slice(6));
     void run(async () => { await queue.current; go(target); });
   }}>
-    <aside inert={!!incoming} className={`sidebar ${sidebar ? 'open' : ''}`}>
-      <a className="brand" href="#" onClick={e => { e.preventDefault(); void run(async () => { await queue.current; go(active.find(p => p.path === 'welcome')?.path || active[0]?.path || ''); }); }}><span className="brand-icon">W</span><span>{data.settings.name}<small>LOCAL WIKI</small></span></a>
+    <aside inert={!!incoming || help} className={`sidebar ${sidebar ? 'open' : ''}`}>
+      <a className="brand" href="#" onClick={e => { e.preventDefault(); void run(async () => { await queue.current; go(active.find(p => p.path === 'welcome')?.path || active[0]?.path || ''); }); }}><span className="brand-icon">W</span><span>{data.settings.name}<small>Your personal knowledge base</small></span></a>
       <button className="primary new-page" disabled={busy} onClick={() => void run(async () => { await queue.current; edit(); })}>＋ New page</button>
       <nav aria-label="Wiki navigation">
         {([['index', '▤', 'All pages'], ['recent', '◷', 'Recent pages'], ['drafts', '✎', 'Drafts'], ['trash', '♲', 'Trash']] as const).map(([key, icon, label]) => <button key={key} className={(section === key || (key === 'index' && section === 'pages')) ? 'nav active' : 'nav'} onClick={() => void run(() => switchSection(key))}><span>{icon}</span>{label}<small>{key === 'index' ? active.length : key === 'drafts' ? data.drafts.length || '' : ''}</small></button>)}
@@ -140,8 +193,8 @@ export function App() {
       <div className="page-tree">{[...groups].map(([name, pages]) => <details key={name} open><summary>{name === 'Pages' ? 'Unsorted' : name.replaceAll(':', ' / ')}</summary>{pages.map(p => <a key={p.id} href={pageUrl(p.path)} className={page?.id === p.id && section === 'pages' ? 'tree-page selected' : 'tree-page'}><span>▧</span>{p.title}{data.drafts.some(d => d.id === p.id) && <i title="Has draft">•</i>}</a>)}</details>)}{!active.length && <p className="muted">Your first page starts here.</p>}</div>
       <div className="sidebar-bottom"><button className="nav" onClick={() => void run(() => switchSection('settings'))}><span>⚙</span>Wiki & backups</button><div className="local-badge"><span className="dot"/> Stored on this device</div></div>
     </aside>
-    <div className="workspace" inert={!!incoming}>
-      <header className="topbar"><button className="mobile-toggle" aria-label="Toggle navigation" onClick={() => setSidebar(!sidebar)}>☰</button><div className="search-box"><span>⌕</span><input id="search" aria-label="Search wiki" placeholder="Search your wiki…" value={query} onChange={e => setQuery(e.target.value)}/><kbd>Ctrl K</kbd></div><span className="connection"><span className="dot"/>{online ? 'Local workspace' : 'Offline · ready'}</span><button disabled={busy} onClick={() => void run(exportBackup)}>Export ZIP <span aria-hidden>↗</span></button></header>
+    <div className="workspace" inert={!!incoming || help}>
+      <header className="topbar"><a className="header-brand" href={pageUrl(active.find(p => p.path === 'welcome')?.path || active[0]?.path || '')}>{data.settings.name}<small>Your personal knowledge base</small></a><button className="mobile-toggle" aria-label="Toggle navigation" onClick={() => setSidebar(!sidebar)}>☰</button><div className="search-box"><span>⌕</span><input id="search" aria-label="Search wiki" placeholder="Search your wiki…" value={query} onChange={e => setQuery(e.target.value)}/><kbd>Ctrl K</kbd></div><button className="shortcut-help" onClick={() => setHelp(true)}>Keyboard shortcuts</button><span className="connection"><span className="dot"/>{online ? 'Local workspace' : 'Offline · ready'}</span><button disabled={busy} onClick={() => void run(exportBackup)}>Export ZIP <span aria-hidden>↗</span></button></header>
       {error && <div role="alert" className="message error">{error}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {notice && <div role="status" className="message">{notice}</div>}
       <main inert={busy}>
@@ -159,24 +212,25 @@ export function App() {
         <div className="editor-heading"><div><div className="eyebrow">{data.pages.some(p => p.id === editor.id) ? 'EDIT PAGE' : 'NEW PAGE'}</div><h1>{editor.title || 'A new thought'}</h1></div><div className="actions"><button disabled={busy} onClick={() => void run(async () => { await queue.current; leaveEditor(); setNotice('Draft kept. Find it under Drafts.'); })}>Close editor</button><button className="primary" disabled={busy || !editor.title.trim() || !normalizePath(editor.path)} onClick={() => void run(publishPage)}>Publish page</button></div></div>
         <div className="edit-fields"><label>Title<input aria-label="Page title" value={editor.title} onChange={e => updateDraft({ ...editor, title: e.target.value, path: !data.pages.some(p => p.id === editor.id) && (!editor.path || editor.path === normalizePath(editor.title)) ? normalizePath(e.target.value) : editor.path })}/></label><label>Page path<input aria-label="Page path" value={editor.path} onChange={e => updateDraft({ ...editor, path: e.target.value })}/><small>Use colons for namespaces: projects:garden</small></label><label>Tags<input aria-label="Tags" value={editor.tags.join(', ')} onChange={e => updateDraft({ ...editor, tags: e.target.value.split(',').map(t => t.trim()) })}/><small>Separate tags with commas</small></label></div>
         {data.pages.some(p => p.id === editor.id && p.path !== normalizePath(editor.path)) && <p className="rename-note">Changing the path does not rewrite incoming links. Update those links after publishing.</p>}
-        <div className="editor-toolbar"><div className="actions"><button title="Insert heading" onClick={() => insert('\n## Heading\n')}>H2</button><button title="Insert bold text" onClick={() => insert('**bold text**')}><b>B</b></button><button onClick={() => insert('[[page-path|label]]')}>Wiki link</button><button disabled={busy} onClick={() => uploads.current?.click()}>＋ Attach file</button></div><button aria-pressed={preview} onClick={() => setPreview(!preview)}>{preview ? 'Hide preview' : 'Show preview'}</button></div>
+        <div className="editor-toolbar"><div className="actions"><button title="Insert heading" onClick={() => heading(2)}>H2</button><button title="Bold [B]" onClick={() => format('**', '**', 'bold text')}><b>B</b></button><button title="Italic [I]" onClick={() => format('*', '*', 'italic text')}><i>I</i></button><button title="Code [M]" onClick={() => format('`', '`', 'code')}>Code</button><button title="Strikethrough [D]" onClick={() => format('~~', '~~', 'text')}>Strike</button><button title="Wiki link [L]" onClick={() => format('[[', ']]', 'page-path|label')}>Wiki link</button><button disabled={busy} onClick={() => uploads.current?.click()}>＋ Attach file</button></div><button title="Preview [P]" aria-pressed={preview} onClick={() => setPreview(!preview)}>{preview ? 'Hide preview' : 'Show preview'}</button></div>
         <div className={`editor-grid ${preview ? '' : 'source-only'}`}><div className="source-pane"><div className="pane-label">MARKDOWN</div><textarea ref={textarea} aria-label="Page content" spellCheck value={editor.source} onChange={e => updateDraft({ ...editor, source: e.target.value })} placeholder="Start writing. Link an idea with [[page-path]]."/></div>{preview && <div className="preview-pane"><div className="pane-label">LIVE PREVIEW</div><Markdown source={editor.source} pages={active} urls={urls}/></div>}</div>
         <div className="editor-footer"><span role="status">{saveState}</span><span>{editor.source.split(/\s+/).filter(Boolean).length} words · Ctrl/Cmd S to publish</span></div>
         <div className="actions secondary-actions"><button className="text-button danger" disabled={busy} onClick={() => { if (confirm('Discard this draft? The published page will remain unchanged.')) void run(async () => { await queue.current; await db.discardDraft(editor.id); leaveEditor(); await refresh(); }); }}>Discard draft</button></div>
         {data.attachments.length > 0 && <details className="attachment-library"><summary>Attachment library ({data.attachments.length})</summary>{data.attachments.map(a => <div className="attachment-row" key={a.id}><span>{a.name} <small>{sizeLabel(a.size)}</small></span><button onClick={() => insert(`${/^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(a.type) ? '!' : ''}[${a.name.replace(/[\[\]]/g, '')}](attachment:${a.id})`)}>Insert</button></div>)}</details>}
       </> : page ? <>
         <div className="breadcrumbs">{page.path.split(':').map((part, i) => <span key={i}>{i > 0 && <b>/</b>}{part}</span>)}</div>
-        <div className="page-heading"><div><div className="eyebrow">YOUR KNOWLEDGE, CONNECTED</div><h1>{page.title}</h1><div className="page-meta">Updated {dateLabel(page.updated)} <span>·</span> {page.source.split(/\s+/).filter(Boolean).length} words</div></div><div className="actions"><button aria-pressed={history} onClick={() => setHistory(!history)}>History <small>{revisions.length}</small></button><button className="primary" onClick={() => edit(page)}>✎ Edit page</button></div></div>
+        <div className="page-heading"><div><h1>{page.title}</h1><div className="page-meta">Updated {dateLabel(page.updated)} <span>·</span> {page.source.split(/\s+/).filter(Boolean).length} words</div></div><nav className="actions page-tools" aria-label="Page tools"><button title="Old revisions [O]" aria-pressed={history} onClick={() => setHistory(!history)}>History <small>{revisions.length}</small></button><button title="Edit page [E]" className="primary" onClick={() => edit(page)}>✎ Edit page</button><button onClick={() => document.getElementById('backlinks')?.scrollIntoView({ behavior: 'smooth' })}>Backlinks</button><button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>Back to top</button></nav></div>
         {!!page.tags.filter(Boolean).length && <div className="tags">{page.tags.filter(Boolean).map((tag, i) => <button key={i} onClick={() => setQuery(tag)}># {tag}</button>)}</div>}
         {data.drafts.some(d => d.id === page.id) && <div className="draft-banner">You have an unpublished draft of this page.<button onClick={() => edit(page)}>Continue editing →</button></div>}
         {history ? <section className="panel history"><h2>Earlier versions</h2><p className="muted">Restoring a revision opens it as a draft. Publish when you’re ready.</p>{!revisions.length && <p>No earlier versions yet. Publishing an edit creates one.</p>}{revisions.map(r => <details key={r.id}><summary>{dateLabel(r.date)} · {r.title}</summary><Markdown source={r.source} pages={active} urls={urls}/><button onClick={() => { if (data.drafts.some(d => d.id === page.id) && !confirm('Replace the existing draft with this revision?')) return; updateDraft({ id: page.id, path: page.path, title: r.title, source: r.source, tags: r.tags, updated: now() }); setHistory(false); }}>Restore as draft</button></details>)}</section> : <article className="article"><Markdown source={page.source} pages={active} urls={urls}/></article>}
-        <footer className="page-footer"><div><div className="eyebrow">LINKED TO THIS PAGE</div>{backlinks.length ? <div className="backlinks">{backlinks.map(p => <a key={p.id} href={pageUrl(p.path)}>↗ {p.title}</a>)}</div> : <p className="muted">No backlinks yet. Link here with <code>[[{page.path}]]</code>.</p>}</div><button className="text-button danger" disabled={busy} onClick={() => { if (confirm(`Move “${page.title}” to Trash? You can restore it later.`)) void run(async () => { await db.setDeleted(page.id, true); await refresh(); setSection('trash'); }); }}>Move to Trash</button></footer>
+        <footer id="backlinks" className="page-footer" tabIndex={-1}><div><div className="eyebrow">LINKED TO THIS PAGE</div>{backlinks.length ? <div className="backlinks">{backlinks.map(p => <a key={p.id} href={pageUrl(p.path)}>↗ {p.title}</a>)}</div> : <p className="muted">No backlinks yet. Link here with <code>[[{page.path}]]</code>.</p>}</div><button className="text-button danger" disabled={busy} onClick={() => { if (confirm(`Move “${page.title}” to Trash? You can restore it later.`)) void run(async () => { await db.setDeleted(page.id, true); await refresh(); setSection('trash'); }); }}>Move to Trash</button></footer>
       </> : <div className="empty missing"><div className="eyebrow">ROOM FOR ANOTHER IDEA</div><h1>{path ? 'This page hasn’t been written yet' : 'Make your first page'}</h1><p>{path ? `Create “${path}” to give this link a home.` : 'Start with a note, a project, or something worth remembering.'}</p>{data.pages.some(p => p.path === path && p.deleted) ? <button onClick={() => setSection('trash')}>Find this page in Trash</button> : <button className="primary" onClick={() => edit(undefined, path)}>＋ Create page</button>}</div>}
       </main>
-      <footer className="workspace-footer"><span>LOCAL WIKI <span> / </span> A little space to think.</span><span>{busy ? 'Working…' : 'Private by design. Yours to keep.'}</span></footer>
+      <footer className="workspace-footer"><span>Local Wiki · Personal knowledge base</span><span>{busy ? 'Working…' : 'Private by design. Yours to keep.'}</span></footer>
     </div>
     <input hidden ref={uploads} type="file" multiple onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (!files.length || !editor) return; void run(async () => { if (files.reduce((n, f) => n + f.size, 0) + data.attachments.reduce((n, a) => n + a.size, 0) > 200 * 1024 * 1024) throw new Error('Attachments are limited to 200 MB total to leave room for page history in backups.'); const items = await db.addAttachments(files); await refresh(); insert('\n' + items.map(a => `${/^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(a.type) ? '!' : ''}[${a.name.replace(/[\[\]]/g, '')}](attachment:${a.id})`).join('\n') + '\n'); }); }}/>
     <input hidden ref={imports} type="file" accept=".zip,application/zip" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void run(async () => { await queue.current; setIncoming(await importZip(file)); }); }}/>
+    {help && <Modal busy={false} titleId="shortcuts-title" onClose={() => setHelp(false)}><h2 id="shortcuts-title">Keyboard shortcuts</h2><p>Use Alt + key on Windows/Linux (Alt + Shift + key also works), or Control + Option + key on Mac. Some system shortcuts may take priority.</p><table className="shortcut-table"><tbody>{[['E', 'Edit or create the current page'], ['S', 'Publish the open draft'], ['P', 'Toggle editor preview'], ['V', 'Close editor and keep draft'], ['B / I', 'Bold / italic'], ['M / D', 'Code / strikethrough'], ['L', 'Wiki link'], ['1–5', 'Heading levels 1–5'], ['- / .', 'Numbered / bulleted list'], ['F', 'Focus search'], ['O', 'Old revisions'], ['R', 'Recent pages'], ['X', 'All pages'], ['T', 'Back to top']].map(([key, label]) => <tr key={key}><th><kbd>{key}</kbd></th><td>{label}</td></tr>)}</tbody></table><p>Formatting keys work in the page content field and wrap the selection. Ctrl/Cmd + S publishes; Ctrl/Cmd + K focuses search. Markdown headings use # through ######. Closing the editor keeps your draft.</p><button onClick={() => setHelp(false)}>Close shortcuts</button></Modal>}
     {incoming && <Modal busy={busy} onClose={() => setIncoming(undefined)}><div className="eyebrow">BACKUP VALIDATED</div><h2 id="import-title">Replace this wiki?</h2><p><strong>{incoming.settings.name}</strong> contains {incoming.pages.length} pages, {incoming.drafts.length} drafts, {incoming.revisions.length} revisions, and {incoming.attachments.length} attachments.</p><p>This replaces all current wiki content in this browser. Export your current wiki first if you want to keep it.</p><div className="actions"><button autoFocus disabled={busy} onClick={() => setIncoming(undefined)}>Cancel</button><button disabled={busy} onClick={() => void run(exportBackup)}>Export current wiki</button><button className="primary" disabled={busy} onClick={() => void run(async () => { await db.replaceWiki(incoming); setWikiName(incoming.settings.name); await refresh(); const first = incoming.pages.find(p => !p.deleted); setIncoming(undefined); leaveEditor(); go(first?.path || ''); setNotice('Wiki restored from ZIP.'); })}>Replace wiki</button></div></Modal>}
   </div>;
 }

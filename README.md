@@ -69,3 +69,9 @@ pnpm test:browser
 Browser tests use a locally installed Microsoft Edge and start a production preview if needed. They use isolated browser profiles, not your personal wiki. Tests cover data round trips, failed-replacement rollback, malformed backups, draft recovery, revisions, backlinks, search, attachment handling, offline reload, second-tab locking, sanitization, and responsive layout.
 
 Source overview: `src/db.ts` owns persistence, `src/backup.ts` owns ZIP serialization and validation, `src/Markdown.tsx` owns sanitized rendering, and `src/App.tsx` provides the interface. `dist/` is the generated static production app.
+
+### Keyboard shortcuts
+
+DokuWiki-style access keys use Alt + key on Windows/Linux (Alt + Shift + key also works), or Control + Option + key on Mac. Browser or operating-system bindings may take priority. Open **Keyboard shortcuts** in the header for the full list.
+
+E edits or creates the current page; S publishes; P toggles preview; V closes the editor while keeping the draft. In the page content field, B/I format bold/italic, M inserts code, D strikes text, L inserts a wiki link, 1–5 apply heading levels, and -/. insert numbered/bulleted lists. Formatting wraps the selected text using Markdown. F focuses search, O opens old revisions, R opens recent pages, X opens all pages, and T returns to the top. Existing Ctrl/Cmd+S and Ctrl/Cmd+K remain available. Shortcuts are suspended while a dialog is open.

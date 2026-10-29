@@ -67,3 +67,38 @@ test('mobile layout and screenshot', async ({ page }) => {
   await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
 });
+
+test('DokuWiki access keys edit, format selections, keep drafts, and respect dialogs', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  await page.keyboard.press('Alt+e');
+  const content = page.getByLabel('Page content');
+  await expect(content).toBeVisible();
+  await content.fill('selected words');
+  await content.selectText();
+  await page.keyboard.press('Alt+b');
+  await expect(content).toHaveValue('**selected words**');
+  await page.keyboard.press('Alt+i');
+  await expect(content).toHaveValue('***selected words***');
+  await content.fill('A heading'); await content.focus();
+  await page.keyboard.press('Alt+2');
+  await expect(content).toHaveValue('## A heading');
+  await page.keyboard.press('Alt+p');
+  await expect(page.locator('.preview-pane')).not.toBeVisible();
+  await page.keyboard.press('Alt+v');
+  await expect(content).not.toBeVisible();
+  await page.keyboard.press('Alt+Shift+e');
+  await expect(content).toHaveValue('## A heading');
+  await page.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  await page.keyboard.press('Control+s');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(content).toBeVisible();
+  await page.keyboard.press('Alt+s');
+  await expect(content).not.toBeVisible();
+  await expect(page.locator('article')).toContainText('A heading');
+  await page.keyboard.press('Alt+f');
+  await expect(page.getByLabel('Search wiki')).toBeFocused();
+  await page.keyboard.press('Alt+x');
+  await expect(page.getByRole('heading', { name: 'All pages', exact: true })).toBeVisible();
+});
