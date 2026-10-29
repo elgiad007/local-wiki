@@ -4,6 +4,7 @@ import * as db from './db';
 import { exportZip, importZip } from './backup';
 import { Markdown } from './Markdown';
 import { Modal } from './Modal';
+import { clearAppCache } from './appCache';
 import { linksIn, normalizePath, now, pageUrl, uid, type Draft, type Page, type Snapshot } from './model';
 
 const dateLabel = (v?: string) => v ? new Date(v).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Never';
@@ -29,6 +30,7 @@ export function App() {
   const [sidebar, setSidebar] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [storage, setStorage] = useState('');
+  const [cacheCleared, setCacheCleared] = useState(false);
   const [incoming, setIncoming] = useState<Snapshot>();
   const [help, setHelp] = useState(false);
   const [wikiName, setWikiName] = useState('');
@@ -202,7 +204,7 @@ export function App() {
         <div className="eyebrow">YOUR WORKSPACE</div><h1>Wiki & backups</h1><p className="lead">A home for your knowledge. Entirely on your device.</p>
         <section className="panel"><h2>Make it yours</h2><label>Wiki name<input value={wikiName} maxLength={100} onChange={e => setWikiName(e.target.value)}/></label><button disabled={busy || !wikiName.trim()} onClick={() => void run(async () => { await db.saveSettings({ ...data.settings, name: wikiName.trim() }); await refresh(); setNotice('Wiki name saved.'); })}>Save name</button></section>
         <section className="panel"><h2>A copy you can keep</h2><p>Export one ZIP with every page, draft, revision, and attachment. Importing replaces this browser’s current wiki after you confirm.</p><div className="stats"><div><strong>{data.pages.length}</strong><span>pages, including trash</span></div><div><strong>{data.attachments.length}</strong><span>attachments · {sizeLabel(data.attachments.reduce((n, a) => n + a.size, 0))}</span></div><div><strong>{data.revisions.length}</strong><span>earlier revisions</span></div></div><p className="muted">Last export initiated: {dateLabel(data.settings.lastExport)}</p><div className="actions"><button className="primary" disabled={busy} onClick={() => void run(exportBackup)}>Export ZIP</button><button disabled={busy} onClick={() => imports.current?.click()}>Import ZIP…</button></div><p className="hint">Backups support up to 250 MB of expanded content. Files are processed locally.</p></section>
-        <section className="panel"><h2>Browser storage</h2><p>Autosave belongs to this browser profile and address. Clearing site data removes it. Keep ZIP backups to move or recover your wiki.</p><button disabled={busy} onClick={() => void run(async () => { const granted = await navigator.storage.persist(); const estimate = await navigator.storage.estimate(); setStorage(`${granted ? 'Persistent storage granted.' : 'Persistent storage was not granted by this browser. Keep regular backups.'} Approximately ${sizeLabel(estimate.usage || 0)} used.`); })}>Request persistent storage</button>{storage && <p role="status">{storage}</p>}<p className="hint">The production build caches the app for offline use after the first successful load. App updates take effect after all wiki tabs close.</p></section>
+        <section className="panel"><h2>Browser storage</h2><p>Autosave belongs to this browser profile and address. Clearing site data removes it. Keep ZIP backups to move or recover your wiki.</p><button disabled={busy} onClick={() => void run(async () => { const granted = await navigator.storage.persist(); const estimate = await navigator.storage.estimate(); setStorage(`${granted ? 'Persistent storage granted.' : 'Persistent storage was not granted by this browser. Keep regular backups.'} Approximately ${sizeLabel(estimate.usage || 0)} used.`); })}>Request persistent storage</button>{storage && <p role="status">{storage}</p>}<p className="hint">The offline app cache lets the wiki open even after the server stops. Clear it to refresh older styles. Your pages, drafts, attachments, and settings are preserved.</p><button disabled={busy || cacheCleared} onClick={() => void run(async () => { await queue.current; await clearAppCache(); setCacheCleared(true); })}>Clear app cache</button>{cacheCleared && <p role="status">App cache cleared. Close all wiki tabs and installed wiki windows, then reopen http://127.0.0.1:4173/ with the server running. Offline caching resumes after the next load.</p>}</section>
       </> : section !== 'pages' ? <>
         <div className="eyebrow">YOUR COLLECTION</div><h1>{section === 'index' ? 'All pages' : section === 'recent' ? 'Recently updated' : section === 'drafts' ? 'Unfinished thoughts' : 'Trash'}</h1>
         <p className="lead">{section === 'drafts' ? 'Your drafts are saved here, ready when you are.' : section === 'trash' ? 'Deleted pages stay here until you restore them. They travel with your backup.' : section === 'index' ? 'Every page in your personal collection.' : 'Pick up where you left off.'}</p>

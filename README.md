@@ -4,6 +4,8 @@ A personal browser-only wiki with local autosave and portable ZIP backups. Built
 
 ## Run locally
 
+On Windows, double-click **start-wiki.bat**. It installs dependencies if needed, builds the latest source, starts the local server, and opens your browser. It checks PATH and common installation folders for Node.js and pnpm, then falls back to Codex's bundled runtime if available. Otherwise, install Node.js 22 or newer and pnpm first. These runtime paths apply only to the launcher window; your system PATH is unchanged. Keep the terminal window open while using the server; press Ctrl+C to stop it. If port 4173 is already occupied, stop the existing server before launching again. To check the build without opening the browser or server, run `start-wiki.bat --build-only`.
+
 Install Node.js 22 or newer and pnpm, then run these commands from this repository:
 
 ```sh
@@ -17,6 +19,12 @@ Open **http://127.0.0.1:4173/**. The preview binds only to the local computer. K
 After the production app finishes its first load, a service worker caches its assets. The app can then open and reload offline in that browser. Bookmark the address or install the app using your browser's installation menu where supported. The server only serves static app files; it does not store wiki content. Opening `index.html` directly with `file://` is not supported.
 
 For development, use `pnpm dev` (a separate origin, usually port 5173). Development mode does not enable offline caching. After building an update, close every wiki tab and reopen to let the waiting service worker activate.
+
+### Clear the offline app cache
+
+The wiki can still open after the server stops because its service worker keeps an offline copy of the app. If older styles appear, start the server, open **Wiki & backups**, and click **Clear app cache**. Then close all wiki tabs and installed wiki windows and reopen **http://127.0.0.1:4173/**. The next load fetches the current build and enables offline caching again. Use the control separately in each browser profile you use.
+
+This removes the service worker and its app asset caches while preserving pages, drafts, history, attachments, and settings in IndexedDB. Do not use the browser's general **Clear site data** command for this task: that also deletes wiki content. The cache control becomes available after loading this update; for an older cached version, close all wiki windows and reopen with the server running to allow the update to activate.
 
 ## Using the wiki
 

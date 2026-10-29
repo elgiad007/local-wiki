@@ -1,5 +1,28 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+test('clearing app cache preserves wiki data and unrelated caches', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New page' }).click();
+  await page.getByLabel('Page title').fill('Cache survivor');
+  await page.getByLabel('Page content').fill('Keep this draft.');
+  await expect(page.getByText('Draft saved on this device', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Wiki & backups/ }).click();
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    await caches.open('unrelated-cache');
+  });
+  expect(await page.evaluate(async () => (await caches.keys()).some(name => name.startsWith('workbox-')))).toBe(true);
+  await page.getByRole('button', { name: 'Clear app cache', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'App cache cleared.' })).toBeVisible();
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+  expect(await page.evaluate(() => caches.keys())).toEqual(['unrelated-cache']);
+  await page.reload();
+  await page.getByRole('button', { name: /Drafts/ }).click();
+  await page.getByRole('button', { name: /Cache survivor/ }).click();
+  await expect(page.getByLabel('Page content')).toHaveValue('Keep this draft.');
+});
+
 test('editing, draft recovery, links, revisions, search, ZIP restore, and offline reload', async ({ page, context }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('/'); await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
