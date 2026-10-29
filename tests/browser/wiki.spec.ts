@@ -1,0 +1,69 @@
+import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+test('editing, draft recovery, links, revisions, search, ZIP restore, and offline reload', async ({ page, context }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/'); await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New page' }).click();
+  await page.getByLabel('Page title').fill('Garden notebook'); await page.getByLabel('Page path').fill('projects:garden');
+  await page.getByLabel('Page content').fill('## Seed plans\nA rare orchid and [[welcome|home]].');
+  await expect(page.getByText('Draft saved on this device', { exact: true })).toBeVisible();
+  await page.reload(); await page.getByRole('button', { name: /Drafts/ }).click(); await page.getByRole('button', { name: /Garden notebook/ }).click();
+  await expect(page.getByLabel('Page content')).toHaveValue(/rare orchid/);
+  await page.getByRole('button', { name: 'Publish page' }).click(); await expect(page.getByRole('heading', { name: 'Garden notebook', exact: true })).toBeVisible();
+  await page.locator('article').getByRole('link', { name: 'home' }).click(); await expect(page.locator('.backlinks')).toContainText('Garden notebook');
+  await page.getByLabel('Search wiki').fill('orchid'); await page.locator('.result').filter({ hasText: 'Garden notebook' }).click();
+  await page.getByRole('button', { name: 'Edit page' }).click(); await page.getByLabel('Page content').fill('Revised orchid notes.');
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('attachment content') },
+    { name: 'book.png', mimeType: 'image/png', buffer: readFileSync('public/icon-192.png') }
+  ]);
+  await expect(page.getByLabel('Page content')).toHaveValue(/attachment:/);
+  await page.getByRole('button', { name: 'Publish page' }).click(); await page.getByRole('button', { name: /History/ }).click();
+  await page.locator('.history summary').click(); await expect(page.locator('.history')).toContainText('rare orchid');
+  await page.getByRole('button', { name: 'Restore as draft' }).click(); await expect(page.getByLabel('Page content')).toHaveValue(/rare orchid/);
+  await page.getByRole('button', { name: 'Close editor' }).click();
+  const downloadPromise = page.waitForEvent('download'); await page.getByRole('button', { name: /Export ZIP/ }).click(); const download = await downloadPromise; const backup = await download.path();
+  await page.getByRole('button', { name: 'New page' }).click(); await page.getByLabel('Page title').fill('Disposable'); await page.getByRole('button', { name: 'Publish page' }).click();
+  await page.getByRole('button', { name: /Wiki & backups/ }).click();
+  await page.locator('input[type=file][accept]').setInputFiles(backup!); await expect(page.getByRole('dialog')).toContainText('Replace this wiki?');
+  await page.getByRole('button', { name: 'Replace wiki', exact: true }).click(); await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.locator('.page-tree')).not.toContainText('Disposable');
+  await page.getByRole('button', { name: /Drafts/ }).click(); await expect(page.locator('.card-list')).toContainText('Garden notebook');
+  await page.locator('.page-tree').getByRole('link', { name: /Garden notebook/ }).click();
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await context.setOffline(true); await page.reload(); await expect(page.getByRole('heading', { name: 'Garden notebook', exact: true })).toBeVisible();
+  await expect(page.getByText('Offline · ready')).toBeVisible();
+  await expect(page.locator('article img')).toBeVisible();
+  expect(await page.locator('article img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(192);
+  const restoredFile = page.waitForEvent('download'); await page.locator('article').getByRole('link', { name: 'notes.txt' }).click();
+  expect(readFileSync((await (await restoredFile).path())!, 'utf8')).toBe('attachment content');
+  expect(errors).toEqual([]);
+});
+test('second tab is locked and external images/scripts do not execute', async ({ page, context }) => {
+  await page.goto('/'); await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  const other = await context.newPage(); await other.goto('/'); await expect(other.getByRole('heading', { name: 'Your wiki is open in another tab' })).toBeVisible(); await other.close();
+  const external: string[] = []; page.on('request', r => { if (r.url().startsWith('https://example.com')) external.push(r.url()); });
+  await page.getByRole('button', { name: 'Edit page' }).click();
+  await page.getByLabel('Page content').fill('![remote](https://example.com/image.png)\n<script>window.__bad = true</script>\n<img src="https://example.com/raw.png" onerror="window.__bad=true">\n<svg><image href="https://example.com/svg.png"/></svg>\n[unsafe](javascript:alert(1))');
+  await expect(page.locator('.preview-pane')).toContainText('Image unavailable');
+  expect(await page.evaluate(() => (window as any).__bad)).toBeUndefined(); expect(external).toEqual([]);
+});
+test('invalid imports preserve content, and pages can be trashed and restored', async ({ page }) => {
+  await page.goto('/'); await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Wiki & backups/ }).click();
+  await page.locator('input[type=file][accept]').setInputFiles({ name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('broken') });
+  await expect(page.getByRole('alert')).toBeVisible(); await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.getByRole('button', { name: /All pages/ }).click(); await expect(page.getByRole('heading', { name: 'All pages', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open →' }).click();
+  page.on('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Move to Trash' }).click();
+  await expect(page.getByRole('heading', { name: 'Trash', exact: true })).toBeVisible(); await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await page.locator('.page-tree').getByRole('link', { name: /Welcome to your wiki/ }).click();
+  await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+});
+test('mobile layout and screenshot', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Welcome to your wiki', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
+});
